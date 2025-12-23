@@ -1,7 +1,17 @@
 [project]
-name = "test"
+name = "nnsight-img2img-example"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.12"
-dependencies = []
+description = "Example of using nnsight with Stable Diffusion Image-to-Image pipeline"
+authors = [
+    {name = "User", email = "user@example.com"}
+]
+dependencies = [
+    "nnsight>=0.5.3",
+    "diffusers>=0.24.0",
+    "transformers>=4.36.0",
+    "accelerate>=0.25.0",
+    "torch>=2.1.0",
+    "numpy>=1.24.0",
+    "pillow>=10.0.0"
+]
+requires-python = ">=3.10"
