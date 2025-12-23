@@ -1,6 +1,6 @@
 """
-nnsight example demonstrating image-to-image pipeline with DiffusionModel.
-This tests whether we can input images to the DiffusionModel for img2img generation.
+nnsight example demonstrating image-to-image pipeline with step-by-step activation capturing.
+Captures text encoder output and UNet activations at specific time steps.
 """
 
 import torch
@@ -12,19 +12,14 @@ from diffusers import StableDiffusionImg2ImgPipeline
 def create_test_image(size=(512, 512)):
     """Create a simple test image (gradient)."""
     import numpy as np
-    
-    # Create a simple gradient image
     x = np.linspace(0, 255, size[0]).astype(np.uint8)
     y = np.linspace(0, 255, size[1]).astype(np.uint8)
     xx, yy = np.meshgrid(x, y)
-    
-    # RGB gradient
     img_array = np.stack([xx, yy, (xx + yy) // 2], axis=-1).astype(np.uint8)
     return Image.fromarray(img_array, mode='RGB')
 
 
 def main():
-    # Check for available device
     if torch.cuda.is_available():
         device = "cuda"
     elif torch.backends.mps.is_available():
@@ -34,60 +29,69 @@ def main():
     
     print(f"Using device: {device}")
     
-    # Create a test input image
-    print("Creating test input image...")
-    input_image = create_test_image(size=(512, 512))
-    input_image.save("input_image.png")
-    print("Saved input image to: input_image.png")
+    # Create test input image
+    input_image = create_test_image()
     
-    # Load the img2img pipeline with nnsight wrapper
-    print("\nLoading Stable Diffusion Img2Img model...")
+    # Load the img2img pipeline
+    print("Loading Stable Diffusion Img2Img model...")
     model = DiffusionModel(
-        "segmind/tiny-sd",  # Using tiny-sd for faster testing
+        "segmind/tiny-sd",
         automodel=StableDiffusionImg2ImgPipeline,
         torch_dtype=torch.float16,
         dispatch=True
     ).to(device)
     
-    prompt = "A beautiful landscape painting with mountains and sunset"
+    prompt = "A mountain landscape"
     
-    print(f"\nPrompt: '{prompt}'")
-    print("Running img2img with tracing to capture UNet activations...\n")
+    print(f"Prompt: '{prompt}'")
+    print("Running img2img with tracing to capture activations at multiple steps...\n")
     
-    # Use generate with tracing - pass image as keyword argument
+    # Use generate to trace
     with model.generate(
         prompt,
         image=input_image,
         strength=0.75,
-        num_inference_steps=20,
+        num_inference_steps=5, # Small number of steps for testing
         seed=42,
     ) as tracer:
-        # Capture activations from the UNet
-        unet_output = model.unet.conv_out.output.save()
+        
+        # 1. Capture Text Encoder Output (happens once at start)
+        # Note: In tiny-sd/SD pipelines, text_encoder output is usually last_hidden_state
+        print("Tracing text encoder...")
+        text_emb = model.text_encoder.output.last_hidden_state.save()
+        
+        # 2. Capture UNet outputs at specific steps
+        # Step 0 (First denoising step)
+        print("Tracing UNet step 0...")
+        unet_step0 = model.unet.conv_out.output.save()
+        
+        # Step 1 (Second denoising step) - access via .next() within the generation loop context
+        model.unet.next() # Advance to next call
+        print("Tracing UNet step 1...")
+        unet_step1 = model.unet.conv_out.output.save()
+        
+        # Step 2
+        model.unet.next()
+        print("Tracing UNet step 2...")
+        unet_step2 = model.unet.conv_out.output.save()
+
     
     # Print results
-    print("=== nnsight Img2Img Example ===\n")
-    print(f"Input image size: {input_image.size}")
-    print(f"Prompt: '{prompt}'")
-    print(f"\nUNet conv_out output shape: {unet_output.shape}")
-    print(f"UNet conv_out output (sample):\n{unet_output[0, :, :3, :3]}")
+    print("\n=== nnsight Multi-Step Capture Results ===")
     
-    # Generate actual image without tracing
-    print("\nGenerating final image...")
-    result = model.generate(
-        prompt,
-        image=input_image,
-        strength=0.75,
-        num_inference_steps=20,
-        seed=42,
-        trace=False
-    )
+    print(f"\nText Encoder Output Shape: {text_emb.shape}")
+    print(f"Text Encoder values (subset):\n{text_emb[0, :3, :5]}")
     
-    # Save the output
-    output_path = "img2img_output.png"
-    result.images[0].save(output_path)
-    print(f"Output image saved to: {output_path}")
-    print("\nSuccess! nnsight supports img2img pipelines!")
+    print(f"\nUNet Step 0 Output Shape: {unet_step0.shape}")
+    print(f"UNet Step 0 val: {unet_step0[0, 0, 0, 0].item():.4f}")
+    
+    print(f"\nUNet Step 1 Output Shape: {unet_step1.shape}")
+    print(f"UNet Step 1 val: {unet_step1[0, 0, 0, 0].item():.4f}")
+    
+    print(f"\nUNet Step 2 Output Shape: {unet_step2.shape}")
+    print(f"UNet Step 2 val: {unet_step2[0, 0, 0, 0].item():.4f}")
+    
+    print("\nVerification successful: Captured activations for text encoder and multiple UNet steps!")
 
 
 if __name__ == "__main__":
